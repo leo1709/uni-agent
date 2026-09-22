@@ -321,17 +321,19 @@ def test_stop_is_idempotent_and_checks_liveness(monkeypatch):
 
 @pytest.mark.cpu
 @pytest.mark.level0
-def test_upload_and_download_use_docker_cp(monkeypatch, tmp_path: Path):
+def test_upload_streams_and_download_uses_docker_cp(monkeypatch, tmp_path: Path):
     sandbox = DockerSandbox(image="example:local")
     sandbox._container_name = "agent-test"
     source = tmp_path / "source.bin"
     destination = tmp_path / "nested" / "destination.bin"
     source.write_bytes(b"content")
     docker_calls: list[tuple[str, ...]] = []
+    stdin_files: list[Path | None] = []
     exec_calls: list[list[str]] = []
 
-    async def fake_run(*args: str, timeout=None):
+    async def fake_run(*args: str, timeout=None, stdin_file=None):
         docker_calls.append(args)
+        stdin_files.append(stdin_file)
         return _ok()
 
     async def fake_exec(argv, **kwargs):
@@ -349,7 +351,17 @@ def test_upload_and_download_use_docker_cp(monkeypatch, tmp_path: Path):
 
     assert exec_calls == [["mkdir", "-p", "/workspace/data"]]
     assert docker_calls == [
-        ("cp", str(source), "agent-test:/workspace/data/source.bin"),
+        (
+            "exec",
+            "-i",
+            "agent-test",
+            "sh",
+            "-c",
+            'cat > "$1"',
+            "sh",
+            "/workspace/data/source.bin",
+        ),
         ("cp", "agent-test:/workspace/data/result.bin", str(destination)),
     ]
+    assert stdin_files == [source, None]
     assert destination.parent.is_dir()

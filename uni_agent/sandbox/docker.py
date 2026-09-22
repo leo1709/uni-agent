@@ -55,16 +55,26 @@ class DockerSandbox(Sandbox):
     def from_config(cls, config: SandboxConfig) -> DockerSandbox:
         return cls(image=config.image, **config.sandbox_kwargs)
 
-    async def _run_docker(self, *args: str, timeout: float | None = None) -> ExecResult:
+    async def _run_docker(
+        self,
+        *args: str,
+        timeout: float | None = None,
+        stdin_file: Path | None = None,
+    ) -> ExecResult:
+        source = stdin_file.open("rb") if stdin_file is not None else None
         try:
             proc = await asyncio.create_subprocess_exec(
                 self.docker_binary,
                 *args,
+                stdin=source,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
         except FileNotFoundError as exc:
             raise RuntimeError(f"Docker executable {self.docker_binary!r} was not found") from exc
+        finally:
+            if source is not None:
+                source.close()
 
         try:
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
@@ -185,7 +195,17 @@ class DockerSandbox(Sandbox):
             created = await self.exec(["mkdir", "-p", parent])
             if created.exit_code != 0:
                 raise RuntimeError(f"Failed to create Docker sandbox directory {parent!r}: {created.stderr.strip()}")
-        result = await self._run_docker("cp", str(local_file), f"{container}:{remote_file}")
+        result = await self._run_docker(
+            "exec",
+            "-i",
+            container,
+            "sh",
+            "-c",
+            'cat > "$1"',
+            "sh",
+            remote_file,
+            stdin_file=Path(local_file),
+        )
         if result.exit_code != 0:
             raise RuntimeError(f"Failed to upload {local_file!s} to {remote_file!r}: {result.stderr.strip()}")
 

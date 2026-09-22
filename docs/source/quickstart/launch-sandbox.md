@@ -60,7 +60,9 @@ Uni-Agent supports multiple sandbox backends. Choose the backend that matches yo
     ```
 
     The provider starts an ephemeral container, executes commands with `docker exec`,
-    transfers files with `docker cp`, and removes the container when the sandbox exits.
+    streams uploads through `docker exec -i`, downloads files with `docker cp`, and
+    removes the container when the sandbox exits. Streaming uploads also works with
+    rootless Docker UID mappings, because Docker does not need to preserve the host UID.
     Setting `pull_timeout` moves the pull into its own `docker pull` step so a stalled
     registry fails with a clear error instead of eating the whole startup budget
     (`SANDBOX_STARTUP_TIMEOUT`, 600s by default, which bounds pull and start together);
