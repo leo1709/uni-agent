@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import shlex
+import time
 from typing import TYPE_CHECKING, Any
 
 from pydantic import Field
@@ -84,6 +85,8 @@ class ReActAgent(Agent):
             "timeouts": 0,
             "errors": 0,
             "total_tokens": 0,
+            "model_metrics": [],
+            "tool_metrics": [],
         }
         termination_reason = "unknown"
         try:
@@ -134,10 +137,24 @@ class ReActAgent(Agent):
             sampling_params=cfg.sampling_params_override.sampling_params(),
         )
         info["total_tokens"] = gen_info["prompt_tokens"] + gen_info["completion_tokens"]
+        cached_tokens = gen_info.get("cached_tokens", 0)
+        prompt_tokens = gen_info["prompt_tokens"]
+        model_metric = {
+            "step": info["steps"],
+            "prompt_tokens": prompt_tokens,
+            "completion_tokens": gen_info["completion_tokens"],
+            "cached_tokens": cached_tokens,
+            "created_cache_tokens": gen_info.get("created_cache_tokens", 0),
+            "cache_hit_rate": cached_tokens / prompt_tokens if prompt_tokens else 0.0,
+            "request_latency_seconds": gen_info.get("request_latency_seconds"),
+            "finish_reason": gen_info.get("finish_reason"),
+        }
+        info.setdefault("model_metrics", []).append(model_metric)
         finish_reason = gen_info.get("finish_reason")
         logger.info(
-            f"Prompt Tokens: {gen_info['prompt_tokens']}, Completion Tokens: {gen_info['completion_tokens']} "
-            f"(total {info['total_tokens']})"
+            f"Prompt Tokens: {prompt_tokens}, Cached Tokens: {cached_tokens}, "
+            f"Completion Tokens: {gen_info['completion_tokens']} (total {info['total_tokens']}), "
+            f"Request Latency: {model_metric['request_latency_seconds']}s"
         )
         logger.info(f"💭 THOUGHT:\n{content}")
 
@@ -160,9 +177,19 @@ class ReActAgent(Agent):
             fn = tool_call.get("function", {})
             name = fn.get("name", "")
             logger.info(f"🎬 ACTION ({name}):\n{fn.get('arguments')}")
+            tool_started = time.perf_counter()
             tool_result = await toolbox.call(name, fn.get("arguments"), timeout=cfg.action_timeout)
+            tool_latency_seconds = time.perf_counter() - tool_started
             observation = tool_result.to_observation()
             info["num_tool_calls"] += 1
+            info.setdefault("tool_metrics", []).append(
+                {
+                    "step": info["steps"],
+                    "name": name,
+                    "status": tool_result.status,
+                    "duration_seconds": tool_latency_seconds,
+                }
+            )
             if tool_result.status == "timeout":  # a tool hit its own timeout (e.g. shell command_timeout)
                 info["timeouts"] += 1
                 logger.warning(

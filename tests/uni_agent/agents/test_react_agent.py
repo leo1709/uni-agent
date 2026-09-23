@@ -49,11 +49,17 @@ class _StepModel:
         finish_reason: str = "stop",
         prompt_tokens: int = 100,
         completion_tokens: int = 1,
+        cached_tokens: int = 0,
+        created_cache_tokens: int = 0,
+        request_latency_seconds: float = 0.25,
     ):
         self.tool_calls = tool_calls or []
         self.finish_reason = finish_reason
         self.prompt_tokens = prompt_tokens
         self.completion_tokens = completion_tokens
+        self.cached_tokens = cached_tokens
+        self.created_cache_tokens = created_cache_tokens
+        self.request_latency_seconds = request_latency_seconds
         self.sampling_params: dict | None = None
 
     async def query(self, messages, *, sampling_params):
@@ -64,7 +70,10 @@ class _StepModel:
             {
                 "prompt_tokens": self.prompt_tokens,
                 "completion_tokens": self.completion_tokens,
+                "cached_tokens": self.cached_tokens,
+                "created_cache_tokens": self.created_cache_tokens,
                 "finish_reason": self.finish_reason,
+                "request_latency_seconds": self.request_latency_seconds,
             },
         )
 
@@ -117,7 +126,14 @@ async def test_model_forwards_finish_reason(monkeypatch):
                     "finish_reason": "length",
                 }
             ],
-            "usage": {"prompt_tokens": 10, "completion_tokens": 2},
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 2,
+                "prompt_tokens_details": {
+                    "cached_tokens": 8,
+                    "created_cache_tokens": 2,
+                },
+            },
         }
 
     monkeypatch.setattr(model, "_post_chat_completion", fake_completion)
@@ -125,6 +141,9 @@ async def test_model_forwards_finish_reason(monkeypatch):
     _, _, generation_info = await model.query([{"role": "user", "content": "test"}])
 
     assert generation_info["finish_reason"] == "length"
+    assert generation_info["cached_tokens"] == 8
+    assert generation_info["created_cache_tokens"] == 2
+    assert generation_info["request_latency_seconds"] >= 0
 
 
 @pytest.mark.cpu
@@ -201,6 +220,38 @@ async def test_total_tokens_tracks_current_context_size():
 @pytest.mark.cpu
 @pytest.mark.level0
 @pytest.mark.asyncio
+async def test_step_records_per_turn_model_metrics():
+    agent = _agent()
+    cfg: ReActConfig = agent.config  # type: ignore[assignment]
+    model = _StepModel(
+        prompt_tokens=100,
+        completion_tokens=2,
+        cached_tokens=64,
+        created_cache_tokens=32,
+        request_latency_seconds=0.25,
+    )
+    info = _step_info()
+
+    reason = await agent.step(cfg, model, _StepToolbox(), [], info)
+
+    assert reason == "finished"
+    assert info["model_metrics"] == [
+        {
+            "step": 1,
+            "prompt_tokens": 100,
+            "completion_tokens": 2,
+            "cached_tokens": 64,
+            "created_cache_tokens": 32,
+            "cache_hit_rate": 0.64,
+            "request_latency_seconds": 0.25,
+            "finish_reason": "stop",
+        }
+    ]
+
+
+@pytest.mark.cpu
+@pytest.mark.level0
+@pytest.mark.asyncio
 async def test_plain_text_without_tool_call_finishes_episode():
     agent = _agent()
     cfg: ReActConfig = agent.config  # type: ignore[assignment]
@@ -240,6 +291,10 @@ async def test_failed_finish_tool_does_not_finish():
 
     assert reason == "completed"
     assert info["errors"] == 1
+    assert len(info["tool_metrics"]) == 1
+    assert info["tool_metrics"][0]["name"] == "finish"
+    assert info["tool_metrics"][0]["status"] == "format_error"
+    assert info["tool_metrics"][0]["duration_seconds"] >= 0
 
 
 @pytest.mark.cpu

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any
 
 import aiohttp
@@ -120,7 +121,9 @@ class OpenAICompatibleChatModel:
         if self.tools_schemas:
             body["tools"] = self.tools_schemas
 
+        request_started = time.perf_counter()
         data = await self._post_chat_completion(body)
+        request_latency_seconds = time.perf_counter() - request_started
 
         response_message = data["choices"][0]["message"]
         response_content = response_message.get("content") or ""
@@ -137,10 +140,14 @@ class OpenAICompatibleChatModel:
         ]
 
         usage = data.get("usage") or {}
+        prompt_details = usage.get("prompt_tokens_details") or {}
         generation_info = {
             "prompt_tokens": usage.get("prompt_tokens", 0),
             "completion_tokens": usage.get("completion_tokens", 0),
+            "cached_tokens": prompt_details.get("cached_tokens", 0) or 0,
+            "created_cache_tokens": prompt_details.get("created_cache_tokens", 0) or 0,
             "finish_reason": data["choices"][0].get("finish_reason"),
+            "request_latency_seconds": request_latency_seconds,
         }
         return response_content, serialized_tool_calls, generation_info
 
