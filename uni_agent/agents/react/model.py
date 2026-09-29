@@ -144,8 +144,8 @@ class OpenAICompatibleChatModel:
         generation_info = {
             "prompt_tokens": usage.get("prompt_tokens", 0),
             "completion_tokens": usage.get("completion_tokens", 0),
-            "cached_tokens": prompt_details.get("cached_tokens", 0) or 0,
-            "created_cache_tokens": prompt_details.get("created_cache_tokens", 0) or 0,
+            "cached_tokens": prompt_details.get("cached_tokens"),
+            "created_cache_tokens": prompt_details.get("created_cache_tokens"),
             "finish_reason": data["choices"][0].get("finish_reason"),
             "request_latency_seconds": request_latency_seconds,
         }

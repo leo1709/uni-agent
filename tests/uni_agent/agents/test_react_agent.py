@@ -49,7 +49,7 @@ class _StepModel:
         finish_reason: str = "stop",
         prompt_tokens: int = 100,
         completion_tokens: int = 1,
-        cached_tokens: int = 0,
+        cached_tokens: int | None = 0,
         created_cache_tokens: int = 0,
         request_latency_seconds: float = 0.25,
     ):
@@ -351,3 +351,88 @@ async def test_per_turn_cap_truncation_ends_the_episode():
 
     assert model.sampling_params["max_tokens"] == 8
     assert reason == "token_limit"
+
+
+@pytest.mark.cpu
+@pytest.mark.level0
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("prompt_details", "expected_cached_tokens"),
+    [
+        ({"cached_tokens": 8}, 8),
+        ({"cached_tokens": 0}, 0),
+        ({"cached_tokens": None}, None),
+        (None, None),
+    ],
+)
+async def test_model_preserves_cache_counts(
+    monkeypatch, prompt_details, expected_cached_tokens
+):
+    model = OpenAICompatibleChatModel(
+        base_url="http://gateway:8000/v1",
+        model_name="policy",
+    )
+
+    async def fake_completion(body):
+        response = {
+            "choices": [
+                {
+                    "message": {"role": "assistant", "content": "hello"},
+                    "finish_reason": "stop",
+                }
+            ],
+            "usage": {
+                "prompt_tokens": 10,
+                "completion_tokens": 2,
+            },
+        }
+
+        if prompt_details is not None:
+            response["usage"]["prompt_tokens_details"] = prompt_details
+
+        return response
+
+    monkeypatch.setattr(model, "_post_chat_completion", fake_completion)
+
+    _, _, generation_info = await model.query(
+        [{"role": "user", "content": "test"}]
+    )
+
+    assert generation_info["cached_tokens"] == expected_cached_tokens
+    assert generation_info["created_cache_tokens"] is None
+
+
+@pytest.mark.cpu
+@pytest.mark.level0
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("prompt_tokens", "cached_tokens", "expected_hit_rate"),
+    [
+        (100, 64, 0.64),
+        (100, 0, 0.0),
+        (100, None, None),
+        (0, 0, None),
+    ],
+)
+async def test_step_preserves_cache_counts(
+    prompt_tokens, cached_tokens, expected_hit_rate
+):
+    agent = _agent()
+    cfg = agent.config
+    info = _step_info()
+
+    model = _StepModel(
+        prompt_tokens=prompt_tokens,
+        cached_tokens=cached_tokens,
+    )
+
+    reason = await agent.step(
+        cfg, model, _StepToolbox(), [], info
+    )
+
+    assert reason == "finished"
+
+    metric = info["model_metrics"][0]
+    assert metric["prompt_tokens"] == prompt_tokens
+    assert metric["cached_tokens"] == cached_tokens
+    assert metric["cache_hit_rate"] == expected_hit_rate

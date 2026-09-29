@@ -111,6 +111,9 @@ async def test_openai_stream_response_emits_compatible_sse_chunks():
         "prompt_tokens": 3,
         "completion_tokens": 2,
         "total_tokens": 5,
+        "prompt_tokens_details":{
+            "cached_tokens": None,
+        },
     }
 
 
@@ -170,3 +173,23 @@ def test_openai_to_internal_normalizes_messages_sampling_and_tools():
         allowed_sampling_keys=ALLOWED_SAMPLING_KEYS,
     )
     assert without_tools["tools"] is None
+
+
+@pytest.mark.cpu
+@pytest.mark.level0
+@pytest.mark.parametrize("cached_tokens", [2, 0, None])
+def test_openai_build_response_preserves_cached_tokens(cached_tokens):
+    from uni_agent.gateway.adapters.openai import openai_build_response
+    from uni_agent.gateway.session.session import GenerationOutcome
+
+    outcome = GenerationOutcome(
+        assistant_msg={"role": "assistant", "content": "hello"},
+        finish_reason="stop",
+        prompt_tokens=3,
+        completion_tokens=2,
+        cached_tokens=cached_tokens,
+    )
+
+    body = openai_build_response(outcome, model="test-model")
+
+    assert body["usage"]["prompt_tokens_details"]["cached_tokens"] == cached_tokens

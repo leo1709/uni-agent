@@ -137,7 +137,7 @@ class ReActAgent(Agent):
             sampling_params=cfg.sampling_params_override.sampling_params(),
         )
         info["total_tokens"] = gen_info["prompt_tokens"] + gen_info["completion_tokens"]
-        cached_tokens = gen_info.get("cached_tokens", 0)
+        cached_tokens = gen_info.get("cached_tokens")
         prompt_tokens = gen_info["prompt_tokens"]
         model_metric = {
             "step": info["steps"],
@@ -145,7 +145,11 @@ class ReActAgent(Agent):
             "completion_tokens": gen_info["completion_tokens"],
             "cached_tokens": cached_tokens,
             "created_cache_tokens": gen_info.get("created_cache_tokens", 0),
-            "cache_hit_rate": cached_tokens / prompt_tokens if prompt_tokens else 0.0,
+            "cache_hit_rate": (
+                cached_tokens / prompt_tokens
+                if cached_tokens is not None and prompt_tokens > 0
+                else None
+            ),
             "request_latency_seconds": gen_info.get("request_latency_seconds"),
             "finish_reason": gen_info.get("finish_reason"),
         }

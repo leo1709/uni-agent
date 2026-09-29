@@ -92,6 +92,9 @@ def openai_build_response(outcome: GenerationOutcome, *, model: str) -> dict[str
             "prompt_tokens": outcome.prompt_tokens,
             "completion_tokens": outcome.completion_tokens,
             "total_tokens": outcome.prompt_tokens + outcome.completion_tokens,
+            "prompt_tokens_details":{
+                "cached_tokens": outcome.cached_tokens,
+            },
         },
     }
 
@@ -101,7 +104,7 @@ def openai_stream_response(outcome: GenerationOutcome, *, model: str) -> Streami
     chunk_id = f"chatcmpl-{uuid4().hex}"
     created = int(time.time())
 
-    def _chunk(delta: dict[str, Any], finish: str | None, usage: dict[str, int] | None = None) -> str:
+    def _chunk(delta: dict[str, Any], finish: str | None, usage: dict[str, Any] | None = None) -> str:
         body = {
             "id": chunk_id,
             "object": "chat.completion.chunk",
@@ -127,6 +130,9 @@ def openai_stream_response(outcome: GenerationOutcome, *, model: str) -> Streami
             "prompt_tokens": outcome.prompt_tokens,
             "completion_tokens": outcome.completion_tokens,
             "total_tokens": outcome.prompt_tokens + outcome.completion_tokens,
+            "prompt_tokens_details": {
+                "cached_tokens": outcome.cached_tokens,
+            },
         }
         yield _chunk({}, outcome.finish_reason, usage).encode()
         yield b"data: [DONE]\n\n"

@@ -2139,3 +2139,49 @@ async def test_weight_versions_absent_when_backend_omits_them():
     [trajectory] = await session.finalize()
 
     assert trajectory.extra_fields == {}
+
+
+@pytest.mark.cpu
+@pytest.mark.level0
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("extra_fields", "expected_cached_tokens"),
+    [
+        ({"num_cached_tokens": 2}, 2),
+        ({"num_cached_tokens": 0}, 0),
+        ({"num_cached_tokens": None}, None),
+        ({}, None),
+    ],
+)
+async def test_session_preserves_backend_cached_tokens(
+    extra_fields, expected_cached_tokens
+):
+    import json
+    from uni_agent.gateway.adapters.openai import openai_build_response
+
+    session = _session("cache-metadata-test")
+    backend = SimpleNamespace(
+        generate=AsyncMock(
+            return_value=TokenOutput(
+                token_ids=_ids("A"),
+                log_probs=[-0.1],
+                stop_reason="completed",
+                extra_fields=extra_fields,
+            )
+        )
+    )
+
+    outcome = await _run(
+        session, backend, [{"role": "user", "content": "hi"}]
+    )
+
+    assert outcome.cached_tokens == expected_cached_tokens
+
+    body = openai_build_response(outcome, model="test-model")
+    decoded = json.loads(json.dumps(body))
+
+    assert (
+        decoded["usage"]["prompt_tokens_details"]["cached_tokens"]
+        == expected_cached_tokens
+    )
+    backend.generate.assert_awaited_once()

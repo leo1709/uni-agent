@@ -173,6 +173,7 @@ class GenerationOutcome:
     finish_reason: str
     prompt_tokens: int
     completion_tokens: int
+    cached_tokens: int | None = None
 
 
 class GatewaySession:
@@ -419,6 +420,7 @@ class GatewaySession:
                     finish_reason=finish_reason,
                     prompt_tokens=len(encoded.context_ids),
                     completion_tokens=len(response_ids),
+                    cached_tokens=output.extra_fields.get("num_cached_tokens"),
                 )
                 if owner_future is not None and request_fingerprint is not None:
                     self._resolve_inflight_exact_request(

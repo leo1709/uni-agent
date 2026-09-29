@@ -16,6 +16,8 @@ from uni_agent.gateway.session import SessionHandle, Trajectory
 from uni_agent.tasks import TaskResult
 from verl.utils import tensordict_utils as tu
 
+import json
+
 _RUNNER_CALLS = []
 _TEST_INLINE_RUNNERS = {}
 _POSTPROCESSOR_CALLS = []
@@ -2014,3 +2016,60 @@ async def test_ray_task_termination_cancels_runner_and_aborts_session(monkeypatc
     # so no force-kill escalation happened.
     assert [call["force"] for call in cancel_calls] == [False]
     assert runtime.aborted_sessions, "terminated session must be aborted"
+
+
+@pytest.mark.cpu
+@pytest.mark.level0
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cached_tokens", [8, 0, None])
+async def test_framework_exports_cache_metadata(
+    tmp_path, fake_tq, cached_tokens
+):
+    extra_info = {
+        "agent_info": {
+            "model_metrics": [
+                {
+                    "step": 1,
+                    "prompt_tokens": 10,
+                    "cached_tokens": cached_tokens,
+                }
+            ]
+        }
+    }
+
+    async def result_runner(**kwargs):
+        return TaskResult(
+            reward=1.0,
+            accuracy=1.0,
+            finished=True,
+            extra_info=extra_info,
+        )
+
+    runtime = _FakeGatewayManager(
+        {"session-sample-0-rollout-0": [_trajectory()]}
+    )
+    framework = await _build_framework_with_agent_runners(
+        agent_runners={"runner": _inline_runner_config(result_runner)},
+        gateway_manager=runtime,
+        log_dir=str(tmp_path),
+    )
+
+    await framework.generate_sequences(
+        _build_prompts(count=1, global_steps=None, validate=True)
+    )
+
+    result_files = list(tmp_path.glob("session-*/task_result.json"))
+    assert len(result_files) == 1
+
+    result_path = result_files[0]
+    payload = json.loads(result_path.read_text(encoding="utf-8"))
+
+    assert payload["schema_version"] == 1
+    assert payload["session_id"] == result_path.parent.name
+    assert payload["reward"] == 1.0
+    assert payload["accuracy"] == 1.0
+    assert payload["finished"] is True
+    assert payload["extra_info"] == extra_info
+
+    assert (result_path.parent / "trajectory.json").is_file()
+    assert (result_path.parent / "trajectory.npz").is_file()

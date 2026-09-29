@@ -919,7 +919,13 @@ class GatewayAgentFramework(AgentFramework):
 
             self._log_trajectory_summary(session_id, result_trajectories)
             if run_dir is not None:
-                await asyncio.to_thread(self._dump_trajectories, run_dir, session_id, result_trajectories)
+                await asyncio.to_thread(
+                    self._dump_trajectories,
+                    run_dir,
+                    session_id,
+                    result_trajectories,
+                    task_result=task_result,
+                )
             session_trace.finish(
                 runner_name=runner_name,
                 status="success",
@@ -981,7 +987,7 @@ class GatewayAgentFramework(AgentFramework):
             )
         logger.info("\n".join(lines))
 
-    def _dump_trajectories(self, run_dir: Path, session_id: str, trajectories: list[Trajectory]) -> None:
+    def _dump_trajectories(self, run_dir: Path, session_id: str, trajectories: list[Trajectory], task_result: TaskResult | None = None) -> None:
         """Persist finalized trajectories next to ``task.log``.
 
         Split by cost: a small human-readable summary (reward, turns, lengths) is written
@@ -992,6 +998,8 @@ class GatewayAgentFramework(AgentFramework):
 
         Runs off the event loop (caller wraps this in ``asyncio.to_thread``) and is
         best-effort: an IO / serialization error is logged but never aborts the rollout.
+
+        When supplied, the task result is saved separately to task_result.json.
         """
         try:
             run_dir.mkdir(parents=True, exist_ok=True)
@@ -1015,6 +1023,24 @@ class GatewayAgentFramework(AgentFramework):
             buf = io.BytesIO()
             np.savez_compressed(buf, **arrays)
             (run_dir / "trajectory.npz").write_bytes(buf.getvalue())
+            if task_result is not None:
+                task_payload = {
+                    "schema_version": 1,
+                    "session_id": session_id,
+                    "reward": task_result.reward,
+                    "accuracy": task_result.accuracy,
+                    "finished": task_result.finished,
+                    "extra_info": task_result.extra_info,
+                }
+                (run_dir / "task_result.json").write_text(
+                    json.dumps(
+                        task_payload,
+                        ensure_ascii=False,
+                        indent=2,
+                        default=_json_default,
+                    ),
+                    encoding="utf-8",
+                )
         except Exception:
             logger.exception("session %s: failed to write trajectory dump under %s", session_id, run_dir)
 
